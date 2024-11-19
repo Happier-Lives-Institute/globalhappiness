@@ -95,6 +95,16 @@ WPP <- WPP %>%
 # Remove Somaliland for simplicity
 dat_WHR <- dat_WHR %>% filter(country != "Somaliland region")
 
+dat_WHR %>% group_by(country) %>% mutate(
+    has_2005 = sum(year == 2005),
+    has_2006 = sum(year == 2006),
+    has_6n5 = has_2005 > 0 & has_2006 > 0
+) %>% ungroup() %>% filter(has_6n5 & year < 2007)
+
+dat_WHR %>% group_by(year) %>% summarise(
+    n = n()
+)
+
 # Remove 2005 because it is strange
 dat_WHR <- dat_WHR %>% filter(year > 2005)
 
@@ -115,7 +125,21 @@ dat_WHR_summary <- dat_WHR %>%
     group_by(year) %>%
     summarise(
         mean = mean(cantril, na.rm = TRUE),
+        SE = sd(cantril, na.rm = TRUE) / sqrt(n()),
+        # SE2 = sqrt(sum((cantril - mean)^2, na.rm = TRUE) /
+        #                (n() - 1)) / sqrt(n()),
+        lb = mean - 1.96 * SE,
+        ub = mean + 1.96 * SE,
         pwm = weighted.mean(cantril, PopTotal, na.rm = TRUE),
+        # https://seismo.berkeley.edu/~kirchner/Toolkits/Toolkit_12.pdf
+        # According to the above there are two options.
+        # The first creates really large uncertainty, unsure if appropriate.
+        # pwSE = sqrt(sum(PopTotal * ((cantril - pwm)^2), na.rm = TRUE) /
+        #                 (sum(PopTotal)^2 / sum(PopTotal))),
+        pwSE = sqrt(sum(PopTotal * ((cantril - pwm)^2), na.rm = TRUE) /
+                        sum(PopTotal)) / sqrt(n()),
+        pwlb = pwm - 1.96 * pwSE,
+        pwub = pwm + 1.96 * pwSE,
         wcsd = mean(SD, na.rm = TRUE),
         bcsd = sd(cantril, na.rm = TRUE)
     ) %>%
@@ -126,7 +150,11 @@ dat_WHR_summary_long <- dat_WHR_summary %>%
         cols = c(mean, pwm, wcsd, bcsd),
         names_to = "metric",
         values_to = "value"
-    )
+    )  %>%
+    mutate(
+        lb = ifelse(metric == "mean", lb, pwlb),
+        ub = ifelse(metric == "mean", ub, pwub),
+    ) %>% select(-pwlb, -pwub)
 
 dat_WHR_summary_long %>% filter(year == max(year))
 
@@ -197,6 +225,7 @@ p2 <- dat_WHR_summary_long %>%
     ggplot(aes(x = year, y = value, color = metric)) +
     geom_vline(xintercept = 2008, linetype = 3) +
     geom_vline(xintercept = 2020, linetype = 3) +
+    geom_ribbon(aes(ymin = lb, ymax = ub, group = metric, fill = metric), alpha = 0.1, colour = NA) +
     geom_line() +
     geom_point() +
     theme_hli_wbg() +
@@ -206,7 +235,7 @@ p2 <- dat_WHR_summary_long %>%
         legend.position = "bottom"
     ) +
     scale_x_continuous(breaks = seq(2006, 2023, 2)) +
-    scale_y_continuous(limits = c(4.80, 5.8), breaks = seq(4.80, 5.8, 0.2)); p2
+    scale_y_continuous(breaks = seq(4.80, 5.8, 0.2)); p2
 
 ggsave(
     filename = "graph/average_zoom.png",
